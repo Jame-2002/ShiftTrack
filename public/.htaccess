@@ -1,0 +1,8 @@
+Options -Indexes
+DirectoryIndex index.php
+<IfModule mod_headers.c>
+ Header always set X-Content-Type-Options "nosniff"
+ <FilesMatch "^(sw\.js|manifest\.webmanifest)$">
+  Header set Cache-Control "no-cache"
+ </FilesMatch>
+</IfModule>

@@ -1,0 +1,1 @@
+ShiftTrack access check. This file must return HTTP 403 when requested through the website.

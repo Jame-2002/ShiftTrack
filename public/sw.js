@@ -1,10 +1,5 @@
-const CACHE='shifttrack-offline-v1';
-const FALLBACK='/offline.html';
-self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll([FALLBACK,'/assets/pwa/icon-192.png'])).then(()=>self.skipWaiting()));});
-self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('shifttrack-offline-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
-self.addEventListener('fetch',event=>{
- const request=event.request,url=new URL(request.url);
- // Never cache APIs, account data, schedules, uploads, or authenticated pages.
- if(request.method!=='GET'||url.origin!==self.location.origin||url.pathname==='/api.php'||request.mode!=='navigate')return;
- event.respondWith(fetch(request).catch(()=>caches.match(FALLBACK).then(page=>page||new Response('กรุณาเชื่อมต่ออินเทอร์เน็ต',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}}))));
-});
+const VERSION='shifttrack-v16-resume';const ASSETS=['./offline.html','./assets/theme.js?v=brand-1','./assets/app.css?v=theme-2','./assets/brand.css?v=brand-9','./assets/fonts/NotoSansThai-variable.ttf','./assets/bootstrap.min.css','./assets/bootstrap-icons.css','./assets/fonts/bootstrap-icons.woff2','./assets/icon-192.png','./assets/icon-512.png'];
+self.addEventListener('install',e=>e.waitUntil(caches.open(VERSION).then(c=>c.addAll(ASSETS))));
+self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const name of await caches.keys())if(name.startsWith('shifttrack-')&&name!==VERSION)await caches.delete(name);await self.clients.claim();})()));
+self.addEventListener('message',e=>{if(e.data==='activate')self.skipWaiting();});
+self.addEventListener('fetch',e=>{const url=new URL(e.request.url);if(url.origin!==location.origin||e.request.method!=='GET')return;if(url.pathname.endsWith('/api.php')||url.pathname.endsWith('/admin.php'))return;if(e.request.mode==='navigate'){e.respondWith(fetch(e.request).catch(()=>caches.match(new URL('./offline.html',self.registration.scope).href)));return;}if(ASSETS.some(a=>new URL(a,self.registration.scope).href===url.href))e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));});
