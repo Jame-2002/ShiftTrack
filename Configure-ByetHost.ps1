@@ -19,4 +19,4 @@ try{
  Remove-Item Env:SHIFTTRACK_MYSQL_PASSWORD,Env:SHIFTTRACK_OWNER_PASSWORD,Env:SHIFTTRACK_CONFIG_DESTINATION -ErrorAction SilentlyContinue
  $mysqlPlain=$null;$ownerPlain=$null;$confirmPlain=$null
 }
-Write-Host 'Ready. Upload the generated private/config.php outside htdocs. Do not share this file.'
+Write-Host 'Ready. For this ByetHost account, upload to htdocs/private/config.php only after private/.htaccess denies web access. See DEPLOY_BYETHOST.md. Do not share this file.'

@@ -45,14 +45,18 @@ try {
     }
     if ($action === 'roster') {
         $id = employeeId($_GET['employee'] ?? ''); $month = monthValue($_GET['month'] ?? '');
+        query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        db()->beginTransaction();
         $person = query('SELECT employee,name,avatar IS NOT NULL AS has_avatar FROM employees WHERE employee=? AND active=1', [$id])->fetch();
-        if (!$person) output(['error' => 'ไม่พบรหัสพนักงานนี้'],404);
+        if (!$person) { db()->commit(); output(['error' => 'ไม่พบรหัสพนักงานนี้'],404); }
         $start = $month . '-01'; $end = date('Y-m-d', strtotime($start . ' +1 month'));
         $rows = query('SELECT s.day,s.code,t.label,t.amount FROM shifts s JOIN shift_types t ON t.code=s.code WHERE s.employee=? AND s.day>=? AND s.day<? ORDER BY s.day', [$id,$start,$end])->fetchAll();
         $peers = query("SELECT b.day,e.employee,e.name,e.avatar IS NOT NULL AS has_avatar FROM shifts a JOIN shifts b ON a.day=b.day AND a.code=b.code JOIN employees e ON e.employee=b.employee AND e.active=1 WHERE a.employee=? AND a.day>=? AND a.day<? AND a.code IN ('D','E','L','N') ORDER BY b.day,e.name", [$id,$start,$end])->fetchAll();
         $total = 0; $complete = true;
         foreach ($rows as $row) { if ($row['amount'] === null) $complete = false; else $total += (int)round((float)$row['amount']*100); }
-        output(['person'=>$person,'rows'=>$rows,'peers'=>$peers,'total'=>$complete ? $total/100 : null,'published'=>query('SELECT revision,published_at FROM rosters WHERE month=?',[$month])->fetch() ?: null]);
+        $published = query('SELECT revision,published_at FROM rosters WHERE month=?',[$month])->fetch() ?: null;
+        db()->commit();
+        output(['person'=>$person,'rows'=>$rows,'peers'=>$peers,'total'=>$complete ? $total/100 : null,'published'=>$published]);
     }
     owner();
     if ($action === 'admin') {
@@ -92,20 +96,21 @@ try {
         $month = monthValue($input['month'] ?? ''); $rows=$input['rows'] ?? [];
         if (empty($input['reviewed']) || !is_array($rows) || count($rows)<1 || count($rows)>3000) throw new InvalidArgumentException('ตรวจตารางและยืนยันก่อนเผยแพร่');
         $known=array_column(query('SELECT employee FROM employees WHERE active=1')->fetchAll(),'employee');
-        $seen=[];
+        $seen=[]; $normalizedRows=[];
         foreach ($rows as $row) {
             $id=employeeId($row['employee'] ?? ''); $day=(string)($row['date'] ?? '');
             if (!in_array($id,$known,true)) throw new InvalidArgumentException('รหัส '.$id.' ยังไม่มีในสมาชิกที่เปิดใช้งาน');
             if (!preg_match('/^'.preg_quote($month,'/').'-(\d{2})$/D',$day,$m) || !checkdate((int)substr($month,5,2),(int)$m[1],(int)substr($month,0,4))) throw new InvalidArgumentException('วันที่ไม่ตรงกับเดือน');
             if (!in_array($row['code'] ?? '',['D','E','L','N','R','PH','AL','BL'],true)) throw new InvalidArgumentException('มีกะไม่ชัดเจน กรุณาตรวจแก้');
             $key=$id.':'.$day; if(isset($seen[$key])) throw new InvalidArgumentException('รายการซ้ำ '.$key); $seen[$key]=true;
+            $normalizedRows[] = ['employee'=>$id,'date'=>$day,'code'=>$row['code']];
         }
         db()->beginTransaction();
         query('INSERT IGNORE INTO rosters(month,revision,published_at) VALUES(?,0,UTC_TIMESTAMP())',[$month]);
         $revision=(int)query('SELECT revision FROM rosters WHERE month=? FOR UPDATE',[$month])->fetchColumn();
         if($revision !== (int)($input['revision'] ?? -1)) { db()->rollBack(); output(['error'=>'มีการเผยแพร่เดือนนี้ระหว่างที่แก้ไข กรุณาโหลดตารางล่าสุด'],409); }
         query('DELETE FROM shifts WHERE day>=? AND day<?',[$month.'-01',date('Y-m-d',strtotime($month.'-01 +1 month'))]);
-        foreach($rows as $row) query('INSERT INTO shifts(employee,day,code) VALUES(?,?,?)',[$row['employee'],$row['date'],$row['code']]);
+        foreach($normalizedRows as $row) query('INSERT INTO shifts(employee,day,code) VALUES(?,?,?)',[$row['employee'],$row['date'],$row['code']]);
         query('UPDATE rosters SET revision=revision+1,published_at=UTC_TIMESTAMP() WHERE month=?',[$month]);
         db()->commit(); output(['ok'=>true]);
     }
