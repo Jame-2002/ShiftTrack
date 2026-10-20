@@ -87,7 +87,7 @@ function trainingReviewReasons(array $event): array
 if (defined('SHIFTTRACK_TRAINING_TEST')) return;
 
 $trainingRead = ['training_list','training_admin'];
-$trainingWrite = ['training_preview','training_import','training_update'];
+$trainingWrite = ['training_preview','training_import','training_update','training_create'];
 if (!in_array($action,array_merge($trainingRead,$trainingWrite),true)) output(['error'=>'ไม่พบคำสั่ง'],404);
 if ($_SERVER['REQUEST_METHOD'] !== (in_array($action,$trainingRead,true) ? 'GET' : 'POST')) output(['error'=>'Method not allowed'],405);
 if ($action !== 'training_list') owner();
@@ -141,6 +141,21 @@ if ($action === 'training_preview' || $action === 'training_import') {
     }
     query('UPDATE training_state SET revision=revision+1 WHERE id=1'); db()->commit();
     output(['ok'=>true,'revision'=>$revision+1,'summary'=>$preview['summary'],'issues'=>$preview['issues']]);
+}
+if ($action === 'training_create') {
+    $requestId=$input['request_id']??'';
+    if(!is_string($requestId)||!preg_match('/^[a-f0-9]{32}$/D',$requestId))throw new InvalidArgumentException('รหัสคำขอไม่ถูกต้อง กรุณาเปิดฟอร์มใหม่');
+    $ids=$input['employees']??[];
+    if(!is_array($ids)||!array_is_list($ids)||count($ids)<1||count($ids)>100)throw new InvalidArgumentException('เลือกผู้เข้าร่วม 1–100 คน');
+    $event=trainingFields(array_merge($input,['event_id'=>'MANUAL-'.$requestId,'module_id'=>'']));
+    db()->beginTransaction();trainingRevision(true);
+    $known=array_fill_keys(query('SELECT employee FROM employees WHERE active=1')->fetchAll(PDO::FETCH_COLUMN),true);
+    $members=[];foreach($ids as $id){$id=employeeId($id);if(!isset($known[$id]))throw new InvalidArgumentException('ไม่พบสมาชิกที่เปิดใช้: '.$id);$members[$id]=true;}
+    if(query('SELECT event_id FROM training_events WHERE event_id=?',[$event['event_id']])->fetch()){db()->rollBack();output(['error'=>'รายการนี้บันทึกแล้ว กรุณาโหลดรอบอบรมล่าสุด'],409);}
+    query('INSERT INTO training_events(event_id,module_id,title,start_date,end_date,start_time,end_time,room,edited,updated_at) VALUES(?,?,?,?,?,?,?,?,1,UTC_TIMESTAMP())',array_values($event));
+    foreach(array_keys($members) as $id)query('INSERT INTO training_enrollments(event_id,employee,status) VALUES(?,?,?)',[$event['event_id'],$id,'ตามแผน']);
+    query('INSERT INTO training_audit(event_id,changed_at,old_value,new_value) VALUES(?,UTC_TIMESTAMP(),?,?)',[$event['event_id'],'null',json_encode($event+['employees'=>array_keys($members)],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)]);
+    query('UPDATE training_state SET revision=revision+1 WHERE id=1');db()->commit();output(['ok'=>true,'event_id'=>$event['event_id']]);
 }
 if ($action === 'training_update') {
     db()->beginTransaction(); trainingRevision(true);
