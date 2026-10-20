@@ -6,6 +6,12 @@ if (!is_file($bootstrap)) $bootstrap = __DIR__ . '/private/bootstrap.php';
 require $bootstrap;
 try {
     $action = $_GET['action'] ?? 'session';
+    if (PHP_SAPI==='cli-server' && in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1','::1'],true)
+        && ($_GET['demo']??'')==='team-day' && $_SERVER['REQUEST_METHOD']==='GET'
+        && is_file(dirname($bootstrap).'/real-team-demo.json')
+        && in_array($action,['roster','team_day','team_month'],true)) {
+        require dirname($bootstrap).'/team-demo.php';
+    }
     $input = [];
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!hash_equals($_SESSION['csrf'], $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '')) output(['error' => 'คำขอหมดอายุ กรุณาโหลดหน้าใหม่'], 403);
@@ -13,6 +19,7 @@ try {
         if (strlen($raw) > 2_000_000) output(['error' => 'ข้อมูลใหญ่เกินไป'], 413);
         $input = str_contains($_SERVER['CONTENT_TYPE'] ?? '', 'application/json') ? json_decode($raw, true, 32, JSON_THROW_ON_ERROR) : $_POST;
     }
+    if (str_starts_with((string)$action, 'training_')) require dirname($bootstrap).'/training.php';
     $writeActions = ['login','logout','employee','rates','publish'];
     if (in_array($action, $writeActions, true) && $_SERVER['REQUEST_METHOD'] !== 'POST') output(['error' => 'Method not allowed'], 405);
     if ($action === 'session') output(['csrf' => $_SESSION['csrf'], 'owner' => !empty($_SESSION['owner']) && time() - ($_SESSION['seen'] ?? 0) <= 1800]);
@@ -57,6 +64,30 @@ try {
         $published = query('SELECT revision,published_at FROM rosters WHERE month=?',[$month])->fetch() ?: null;
         db()->commit();
         output(['person'=>$person,'rows'=>$rows,'peers'=>$peers,'total'=>$complete ? $total/100 : null,'published'=>$published]);
+    }
+    if ($action === 'team_month') {
+        if ($_SERVER['REQUEST_METHOD'] !== 'GET') output(['error'=>'Method not allowed'],405);
+        $month = monthValue($_GET['month'] ?? '');
+        query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        db()->beginTransaction();
+        $published = query('SELECT revision,published_at FROM rosters WHERE month=?',[$month])->fetch() ?: null;
+        $counts = $published ? query("SELECT s.day,s.code,COUNT(*) AS people FROM shifts s JOIN employees e ON e.employee=s.employee WHERE s.day>=? AND s.day<? AND e.active=1 GROUP BY s.day,s.code ORDER BY s.day,s.code",[$month.'-01',date('Y-m-d',strtotime($month.'-01 +1 month'))])->fetchAll() : [];
+        db()->commit();
+        output(['month'=>$month,'published'=>$published,'counts'=>$counts]);
+    }
+    if ($action === 'team_day') {
+        if ($_SERVER['REQUEST_METHOD'] !== 'GET') output(['error'=>'Method not allowed'],405);
+        $day = (string)($_GET['day'] ?? '');
+        if (!preg_match('/^(20\d{2})-(\d{2})-(\d{2})$/D',$day,$parts)
+            || !checkdate((int)$parts[2],(int)$parts[3],(int)$parts[1])) {
+            throw new InvalidArgumentException('วันที่ต้องเป็น YYYY-MM-DD ที่ถูกต้อง');
+        }
+        query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+        db()->beginTransaction();
+        $published = query('SELECT revision,published_at FROM rosters WHERE month=?',[substr($day,0,7)])->fetch() ?: null;
+        $members = $published ? query('SELECT s.code,e.employee,e.name,e.avatar IS NOT NULL AS has_avatar FROM shifts s JOIN employees e ON e.employee=s.employee WHERE s.day=? AND e.active=1 ORDER BY e.name',[$day])->fetchAll() : [];
+        db()->commit();
+        output(['day'=>$day,'published'=>$published,'members'=>$members]);
     }
     owner();
     if ($action === 'admin') {

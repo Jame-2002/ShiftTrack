@@ -1,4 +1,4 @@
-const VERSION='shifttrack-v17-consistency';const ASSETS=['./offline.html','./assets/theme.js?v=brand-1','./assets/app.css?v=theme-2','./assets/brand.css?v=brand-9','./assets/fonts/NotoSansThai-variable.ttf','./assets/bootstrap.min.css','./assets/bootstrap-icons.css','./assets/fonts/bootstrap-icons.woff2','./assets/icon-192.png','./assets/icon-512.png'];
+const VERSION='shifttrack-v18-training';const ASSETS=['./offline.html','./assets/theme.js?v=brand-1','./assets/app.css?v=theme-2','./assets/brand.css?v=brand-9','./assets/fonts/NotoSansThai-variable.ttf','./assets/bootstrap.min.css','./assets/bootstrap-icons.css','./assets/fonts/bootstrap-icons.woff2','./assets/icon-192.png','./assets/icon-512.png'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(VERSION).then(c=>c.addAll(ASSETS))));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const name of await caches.keys())if(name.startsWith('shifttrack-')&&name!==VERSION)await caches.delete(name);await self.clients.claim();})()));
 self.addEventListener('message',e=>{if(e.data==='activate')self.skipWaiting();});

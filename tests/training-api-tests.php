@@ -1,0 +1,75 @@
+<?php
+declare(strict_types=1);
+if(PHP_SAPI!=='cli')exit(1);
+$root=dirname(__DIR__);$config=require $root.'/private/config.php';
+if(!str_contains($config['dsn'],'host=127.0.0.1'))throw new RuntimeException('Local database required');
+$dsn=preg_replace('/;dbname=[^;]+/','',$config['dsn']);
+$pdo=new PDO($dsn,$config['user'],$config['password'],[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+$name='shifttrack_training_qa_'.bin2hex(random_bytes(4));
+$pdo->exec('CREATE DATABASE `'.$name.'` CHARACTER SET utf8mb4');
+$pdo->exec('USE `'.$name.'`');
+$pdo->exec(file_get_contents($root.'/database/schema.sql'));
+$pdo->exec(file_get_contents($root.'/database/training.sql'));
+$pdo->exec("INSERT INTO employees(employee,name) VALUES('001','QA One'),('002','QA Two')");
+$password=bin2hex(random_bytes(16));$config['dsn']=$dsn.';dbname='.$name;$config['admin_hash']=password_hash($password,PASSWORD_DEFAULT);$config['secure_cookies']=false;
+$temp=tempnam(sys_get_temp_dir(),'shifttrack-training-');
+file_put_contents($temp,'<?php return '.var_export($config,true).';');
+$env=getenv();$env['SHIFTTRACK_CONFIG_PATH']=$temp;
+$log=tempnam(sys_get_temp_dir(),'shifttrack-qa-log-');
+$server=proc_open([PHP_BINARY,'-S','127.0.0.1:8093','-t',$root.'/public'],[0=>['pipe','r'],1=>['file',$log,'a'],2=>['file',$log,'a']],$pipes,$root,$env);
+if(!is_resource($server))throw new RuntimeException('Cannot start test server');
+register_shutdown_function(function()use($server,$temp){proc_terminate($server);proc_close($server);unlink($temp);});
+for($i=0;$i<30;$i++){if($socket=@fsockopen('127.0.0.1',8093,$errno,$error,.1)){fclose($socket);break;}usleep(100000);}
+$cookie='';$checks=0;
+function requestTraining(string $action,?array $body=null,string $token='',int $expected=200,bool $session=true):array{
+ global $cookie,$checks;
+ $curl=curl_init('http://127.0.0.1:8093/api.php?action='.$action);
+ $headers=['Content-Type: application/json'];if($token!=='')$headers[]='X-CSRF-Token: '.$token;
+ curl_setopt_array($curl,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_HEADER=>true,CURLOPT_HTTPHEADER=>$headers]);
+ if($session&&$cookie!=='')curl_setopt($curl,CURLOPT_COOKIE,$cookie);
+ if($body!==null){curl_setopt($curl,CURLOPT_POST,true);curl_setopt($curl,CURLOPT_POSTFIELDS,json_encode($body));}
+ $raw=curl_exec($curl);$status=curl_getinfo($curl,CURLINFO_RESPONSE_CODE);$headerSize=curl_getinfo($curl,CURLINFO_HEADER_SIZE);curl_close($curl);
+ $head=substr($raw,0,$headerSize);if($session&&preg_match('/Set-Cookie: ([^;\r\n]+)/i',$head,$m))$cookie=$m[1];
+ $result=json_decode(substr($raw,$headerSize),true,32,JSON_THROW_ON_ERROR);
+ if($status!==$expected)throw new RuntimeException("$action expected $expected got $status ".json_encode($result));$checks++;return $result;
+}
+function checkTraining(bool $value,string $message):void{global $checks;if(!$value)throw new RuntimeException($message);$checks++;}
+$session=requestTraining('session');$token=$session['csrf'];
+requestTraining('training_admin',null,'',401);
+requestTraining('training_import',[], $token,401);
+requestTraining('training_update',[], 'wrong',403);
+requestTraining('login',['password'=>$password],$token);
+$event=['event_id'=>'QA-EVENT','module_id'=>'QA','title'=>'Training <safe>','start_date'=>'2026-10-26','end_date'=>'2026-10-27','start_time'=>'08:00','end_time'=>'17:00','room'=>'Room A','participants'=>[['employee'=>'001','schedule_id'=>'S1','status'=>'Not Start'],['employee'=>'002','schedule_id'=>'S2','status'=>'Not Start'],['employee'=>'missing','schedule_id'=>'S3','status'=>'Not Start']]];
+$preview=requestTraining('training_preview',['events'=>[$event]],$token);
+checkTraining($preview['summary']['unknown']===1&&$preview['summary']['participants']===2,'Unknown member filtered');
+requestTraining('training_import',['events'=>$preview['events'],'revision'=>$preview['revision'],'reviewed'=>true],$token);
+requestTraining('training_import',['events'=>$preview['events'],'revision'=>$preview['revision'],'reviewed'=>true],$token,409);
+$list=requestTraining('training_list&employee=001&month=2026-10',null,'',200,false);
+checkTraining(count($list['events'])===1&&$list['events'][0]['title']===$event['title'],'Employee list returns imported title');
+requestTraining('training_list&employee=missing&month=2026-10',null,'',404,false);
+$edit=$event;unset($edit['participants']);$edit['revision']=(int)$list['events'][0]['revision'];$edit['title']='Edited title';$edit['start_date']='2026-11-01';$edit['end_date']='2026-11-02';
+requestTraining('training_update',$edit,$token);
+requestTraining('training_update',$edit,$token,409);
+$p=requestTraining('training_preview',['events'=>[$event]],$token);
+requestTraining('training_import',['events'=>$p['events'],'revision'=>$p['revision'],'reviewed'=>true],$token);
+$edit['revision']++;
+requestTraining('training_update',$edit,$token,409);
+$nov=requestTraining('training_list&employee=002&month=2026-11',null,'',200,false);
+checkTraining($nov['events'][0]['title']==='Edited title','Reimport preserves owner changes for all participants');
+checkTraining((int)$pdo->query('SELECT COUNT(*) FROM training_events')->fetchColumn()===1,'No duplicate events');
+checkTraining((int)$pdo->query('SELECT COUNT(*) FROM training_enrollments')->fetchColumn()===2,'No duplicate enrollments');
+checkTraining((int)$pdo->query('SELECT COUNT(*) FROM training_audit')->fetchColumn()===1,'Audit stored');
+$pending=$event;$pending['event_id']='QA-PENDING';$pending['start_date']=$pending['end_date']=null;
+$p=requestTraining('training_preview',['events'=>[$pending]],$token);
+requestTraining('training_import',['events'=>$p['events'],'revision'=>$p['revision'],'reviewed'=>true],$token);
+$list=requestTraining('training_list&employee=001&month=2027-01',null,'',200,false);
+checkTraining(count($list['events'])===0&&count($list['undated'])===0,'Incomplete schedule hidden from members');
+$admin=requestTraining('training_admin');
+$pendingAdmin=array_values(array_filter($admin['events'],fn($e)=>$e['event_id']==='QA-PENDING'))[0];
+checkTraining(in_array('วันเริ่ม / วันสิ้นสุด',$pendingAdmin['review_reasons'],true),'Owner sees missing date reason');
+$pendingEdit=$pending;unset($pendingEdit['participants']);$pendingEdit['revision']=(int)$pendingAdmin['revision'];$pendingEdit['start_date']='2027-01-10';$pendingEdit['end_date']='2027-01-11';
+requestTraining('training_update',$pendingEdit,$token);
+$visible=requestTraining('training_list&employee=001&month=2027-01',null,'',200,false);
+checkTraining(count($visible['events'])===1,'Completed schedule becomes visible after owner saves');
+checkTraining((int)$pdo->query('SELECT COUNT(*) FROM shifts')->fetchColumn()===0,'Training did not modify shifts');
+echo "Training HTTP integration: $checks checks passed. Isolated database $name retained locally.\n";
