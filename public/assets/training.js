@@ -34,10 +34,10 @@
    state.textContent=dated.length?'พบ '+dated.length+' รอบในเดือนที่เลือก':'ยังไม่มีการอบรมในเดือนที่เลือก';
    calendar.append(el('h3',new Date(month+'-01T12:00:00').toLocaleDateString('th-TH',{month:'long',year:'numeric'})));
    const grid=el('div',undefined,'training-grid');for(const label of ['จ.','อ.','พ.','พฤ.','ศ.','ส.','อา.'])grid.append(el('span',label,'training-weekday'));
-   const [year,m]=month.split('-').map(Number);for(let i=0;i<(new Date(year,m-1,1).getDay()+6)%7;i++)grid.append(el('span'));
+   const today=new Date(),todayKey=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');const [year,m]=month.split('-').map(Number);for(let i=0;i<(new Date(year,m-1,1).getDay()+6)%7;i++)grid.append(el('span'));
    for(let day=1;day<=new Date(year,m,0).getDate();day++){
     const key=month+'-'+String(day).padStart(2,'0'),matches=dated.filter(x=>intersects(x,key)),cell=el(matches.length?'button':'div',undefined,'training-date'+(matches.length?' has-training':''));
-    cell.append(el('span',String(day)));if(matches.length){cell.type='button';cell.append(el('small',matches.length+' รอบ'));cell.setAttribute('aria-label',format(key)+' มีช่วงอบรม '+matches.length+' รอบ');cell.onclick=()=>{list.replaceChildren(...matches.map(card));list.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});};}grid.append(cell);
+    if(key===todayKey){cell.classList.add('today');cell.setAttribute('aria-current','date');cell.setAttribute('title','วันนี้');}cell.append(el('span',String(day)));if(matches.length){cell.type='button';cell.append(el('small',matches.length+' รอบ'));cell.setAttribute('aria-label',format(key)+' มีช่วงอบรม '+matches.length+' รอบ');cell.onclick=()=>{list.replaceChildren(...matches.map(card));list.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});};}grid.append(cell);
    }
    calendar.append(grid,el('small','เครื่องหมายแสดงช่วงเริ่ม–สิ้นสุดตามกำหนดการ ไม่ได้ยืนยันวันเรียนจริง','text-muted'));
    list.append(...dated.map(card));if(tbc.length)pending.append(el('h3','ยังไม่กำหนดวัน · '+tbc.length+' รอบ'),...tbc.map(card));
